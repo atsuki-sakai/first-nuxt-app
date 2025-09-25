@@ -1,0 +1,13 @@
+# Docker Compose設定ファイル
+services:
+  nuxt-app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3000:3000"  # ホスト:コンテナのポートマッピング
+    environment:
+      - NODE_ENV=production  # 本番環境設定
+      - PORT=3000           # アプリケーションポート
+      - HOST=0.0.0.0        # すべてのインターフェースでリッスン
+    restart: unless-stopped # コンテナ自動再起動
