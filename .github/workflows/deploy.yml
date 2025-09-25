@@ -1,19 +1,11 @@
-# =================================
 # GitHub Actions CI/CD パイプライン
 # Google Cloud Run 自動デプロイ設定
-# =================================
-name: Deploy to Cloud Run
 
-# トリガー条件: どのイベントでワークフローを実行するか
 on:
-  push:
-    # main または master ブランチにプッシュされた時にデプロイ実行
-    branches: [ main, master ]
   pull_request:
     # Pull Request作成時にテストのみ実行（デプロイはしない）
     branches: [ main, master ]
 
-# 環境変数: ワークフロー全体で使用する設定値
 env:
   # GCP プロジェクトID（GitHub Secrets から取得）
   # 設定場所: リポジトリ > Settings > Secrets > Actions
@@ -33,111 +25,13 @@ env:
 
 jobs:
   # =======================
-  # 本番デプロイジョブ
-  # =======================
-  deploy:
-    # 実行条件: push イベント（PR時は実行しない）
-    # セキュリティ: PR では本番環境にデプロイしない
-    if: github.event_name == 'push'
-
-    # GitHub Actions での権限設定
-    permissions:
-      # リポジトリのコードを読み取る権限
-      contents: read
-      # Workload Identity Federation用のIDトークン書き込み権限
-      # GCPへの認証に必要な特別な権限
-      id-token: write
-
-    # 実行環境: Ubuntu最新版
-    runs-on: ubuntu-latest
-
-    steps:
-      # ステップ1: ソースコードのチェックアウト
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      # ステップ2: GCP認証（Workload Identity Federation使用）
-      - name: Google Auth
-        id: auth
-        uses: 'google-github-actions/auth@v2'
-        with:
-          # アクセストークン形式でレスポンスを取得
-          # Docker認証で使用するため
-          token_format: 'access_token'
-
-          # Workload Identity Provider の完全パス
-          # 設定値例: projects/123456789/locations/global/workloadIdentityPools/github/providers/github-provider
-          # GCP-SETUP.mdの手順で作成したプロバイダーのパス
-          workload_identity_provider: '${{ secrets.WIF_PROVIDER }}'
-
-          # 使用するサービスアカウント
-          # 設定値例: github-actions-cloudrun@PROJECT_ID.iam.gserviceaccount.com
-          # Cloud Run デプロイ権限を持つサービスアカウント
-          service_account: '${{ secrets.WIF_SERVICE_ACCOUNT }}'
-
-      # ステップ3: Docker Registry（Artifact Registry）への認証
-      - name: Docker Auth
-        id: docker-auth
-        uses: 'docker/login-action@v3'
-        with:
-          # OAuth2アクセストークンを使用したユーザー名
-          # GCP Artifact Registry での認証に必要な固定値
-          username: 'oauth2accesstoken'
-
-          # 上記のGoogle Auth ステップで取得したアクセストークン
-          # ${{ steps.[STEP_ID].outputs.[OUTPUT_NAME] } の形式で前ステップの出力を参照
-          password: '${{ steps.auth.outputs.access_token }}'
-
-          # Artifact Registry のホスト名
-          # 形式: [REGION]-docker.pkg.dev
-          # 例: asia-northeast1-docker.pkg.dev
-          registry: '${{ env.GAR_LOCATION }}-docker.pkg.dev'
-
-      # ステップ4: Docker イメージのビルドとプッシュ
-      - name: Build and Push Container
-        run: |-
-          # Docker イメージをビルド
-          # タグ形式: [REGISTRY]/[PROJECT_ID]/[REPOSITORY]/[IMAGE]:[TAG]
-          # 例: asia-northeast1-docker.pkg.dev/my-project/nuxt-app/nuxt-app:abc123
-          # ${{ github.sha }} = コミットハッシュ（一意なタグとして使用）
-          docker build -t "${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE }}/${{ env.SERVICE }}:${{ github.sha }}" ./
-
-          # ビルドしたイメージをArtifact Registryにプッシュ
-          # このイメージがCloud Runでデプロイされる
-          docker push "${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE }}/${{ env.SERVICE }}:${{ github.sha }}"
-
-      # ステップ5: Cloud Run へのデプロイ
-      - name: Deploy to Cloud Run
-        id: deploy
-        uses: google-github-actions/deploy-cloudrun@v2
-        with:
-          # デプロイ先のCloud Runサービス名
-          # 存在しない場合は自動作成される
-          service: ${{ env.SERVICE }}
-
-          # デプロイするリージョン
-          # サービスが動作するGCPリージョン
-          region: ${{ env.REGION }}
-
-          # デプロイするDockerイメージの完全パス
-          # 上記でプッシュしたイメージと同じパスを指定
-          image: ${{ env.GAR_LOCATION }}-docker.pkg.dev/${{ env.PROJECT_ID }}/${{ env.SERVICE }}/${{ env.SERVICE }}:${{ github.sha }}
-
-      # ステップ6: デプロイ結果の表示
-      - name: Show Output
-        run: echo ${{ steps.deploy.outputs.url }}
-
-  # =======================
   # テスト・品質チェックジョブ
   # =======================
   test:
     # 実行条件: Pull Request作成時のみ
-    # 本番デプロイ前の品質チェックとして実行
     if: github.event_name == 'pull_request'
-
     # 実行環境: Ubuntu最新版
     runs-on: ubuntu-latest
-
     steps:
       # ステップ1: ソースコードのチェックアウト
       - name: Checkout
@@ -148,18 +42,14 @@ jobs:
         uses: actions/setup-node@v4
         with:
           # Node.js バージョン: Dockerfile と同じバージョンを指定
-          # Nuxt 4.1.2 の要件に合わせて Node.js 20 を使用
-          node-version: '20'
-
+          # Nuxt 4.1.2 の要件に合わせて Node.js 22.20.0 を使用
+          node-version: '22.20.0'
           # npm キャッシュを有効化
           # 依存関係のインストール時間を短縮
           cache: 'npm'
 
       # ステップ3: 依存関係のインストール
-      - name: Install dependencies
-        # npm ci: package-lock.json に基づいてクリーンインストール
-        # npm install より高速で、本番環境と同じ依存関係を保証
-        run: npm ci
+      - run: npm ci
 
       # ステップ4: テストの実行
       - name: Run tests
